@@ -1,0 +1,5 @@
+{
+  "name": "Copy of PhysioSim 3D: Clínica Virtual",
+  "description": "Simulador de fisioterapia en primera persona. Atiende pacientes generados por IA, coloca electrodos en 3D y configura equipos de electroterapia.",
+  "requestFramePermissions": []
+}
