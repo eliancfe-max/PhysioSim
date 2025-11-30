@@ -1,4 +1,3 @@
-
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useGLTF, Html } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
@@ -21,7 +20,7 @@ const GhostHand: React.FC<{ config: GhostHandConfig; scene: THREE.Group }> = ({ 
   useFrame(() => {
     if (!meshRef.current || !scene) return;
     
-    // Find bone in the CLONED scene
+    // Find bone in the scene
     let targetBone = scene.getObjectByName(config.targetBone);
     if (!targetBone && !config.targetBone.startsWith('mixamorig')) {
         targetBone = scene.getObjectByName(`mixamorig${config.targetBone}`);
@@ -69,17 +68,14 @@ const GhostHand: React.FC<{ config: GhostHandConfig; scene: THREE.Group }> = ({ 
 export const HumanAnatomyModel: React.FC<HumanAnatomyModelProps> = ({ currentStep, onAnimationComplete }) => {
   const { scene } = useGLTF(MODEL_URL);
   
-  // 1. CLONE SCENE (Critical: Create independent instance for animations)
-  // This ensures we can animate this specific model instance without affecting others
-  const modelScene = useMemo(() => scene.clone(), [scene]);
-
+  // Determine context
   const maneuverKey = currentStep?.animation.includes('Trendelenburg') ? 'trendelenburg' : 'thomas';
   const isTrendelenburg = maneuverKey === 'trendelenburg';
   const isThomas = maneuverKey === 'thomas';
 
-  // 2. MATERIAL SETUP (On Clone)
+  // 1. MATERIAL SETUP
   useEffect(() => {
-      modelScene.traverse((child: any) => {
+      scene.traverse((child: any) => {
         if (child.isMesh) {
             child.material = new THREE.MeshStandardMaterial({
                 color: "#eebb99", 
@@ -90,44 +86,38 @@ export const HumanAnatomyModel: React.FC<HumanAnatomyModelProps> = ({ currentSte
             child.castShadow = true;
         }
       });
-  }, [modelScene]);
+  }, [scene]);
 
-  // 3. HARD RESET ON MANEUVER CHANGE
-  // This cleans up any "dirty" rotations from the previous maneuver immediately.
+  // 2. HARD RESET ON MANEUVER CHANGE
   useEffect(() => {
-      // Reset all bone rotations to T-Pose
-      modelScene.traverse((obj) => {
+      scene.traverse((obj) => {
           if (obj.type === 'Bone') {
               obj.rotation.set(0, 0, 0);
           }
       });
       
-      // FORCE HIPS POSITION:
-      // This is crucial. If we don't set this immediately, 
-      // the model might start "lying down" during Trendelenburg or "floating" in Thomas.
-      const hips = modelScene.getObjectByName('mixamorigHips') || modelScene.getObjectByName('Hips');
+      const hips = scene.getObjectByName('mixamorigHips') || scene.getObjectByName('Hips');
       if (hips) {
-          hips.rotation.set(0,0,0);
+          hips.rotation.set(0, 0, 0);
           if (isTrendelenburg) {
-              hips.position.set(0, 0.95, 0); // Standing height relative to feet
+              hips.position.set(0, 1.0, 0); // Standing height (Increased to 1.0)
           } else {
-              hips.position.set(0, 0.05, 0); // Lying height relative to table
+              hips.position.set(0, 0.05, 0); // Lying height (local)
           }
       }
-  }, [maneuverKey, modelScene, isTrendelenburg]);
+  }, [maneuverKey, scene, isTrendelenburg]);
 
 
-  // 4. LAYOUT COORDINATES (Global Transform)
+  // 3. LAYOUT COORDINATES
   const layout = useMemo(() => {
       if (isTrendelenburg) {
-          // STANDING: Vertical rotation, Floor position (-0.9)
+          // STANDING: Floor position (-0.9)
           return {
               position: [0, -0.9, 0] as [number, number, number], 
               rotation: [0, 0, 0] as [number, number, number] 
           };
       } else {
-          // SUPINE (Thomas): -90 deg rotation on X.
-          // Position Z=0.8 aligns feet to bottom of table.
+          // SUPINE (Thomas)
           return {
               position: [0, 0.15, 0.8] as [number, number, number], 
               rotation: [-Math.PI / 2, 0, 0] as [number, number, number] 
@@ -135,12 +125,11 @@ export const HumanAnatomyModel: React.FC<HumanAnatomyModelProps> = ({ currentSte
       }
   }, [isTrendelenburg]);
 
-  // 5. ANIMATION LOOP (Targeting CLONE)
+  // 4. ANIMATION LOOP
   useFrame((state, delta) => {
     if (!currentStep) return;
 
-    // Search in modelScene (Clone)
-    const getBone = (name: string) => modelScene.getObjectByName(`mixamorig${name}`) || modelScene.getObjectByName(name);
+    const getBone = (name: string) => scene.getObjectByName(`mixamorig${name}`) || scene.getObjectByName(name);
     const lerpSpeed = delta * 3; 
 
     const hips = getBone('Hips');
@@ -156,12 +145,11 @@ export const HumanAnatomyModel: React.FC<HumanAnatomyModelProps> = ({ currentSte
     if (isThomas) {
        // --- THOMAS (Supine) ---
        
-       // Force Hips to Table level
        if (hips) {
+           // Keep hips flat on table
            hips.position.lerp(new THREE.Vector3(0, 0.05, 0), lerpSpeed); 
        }
 
-       // Arms at side (Neutral)
        if (leftArm) leftArm.rotation.z = THREE.MathUtils.lerp(leftArm.rotation.z, -1.2, lerpSpeed);
        if (rightArm) rightArm.rotation.z = THREE.MathUtils.lerp(rightArm.rotation.z, 1.2, lerpSpeed);
 
@@ -184,21 +172,19 @@ export const HumanAnatomyModel: React.FC<HumanAnatomyModelProps> = ({ currentSte
 
     else if (isTrendelenburg) {
         // --- TRENDELENBURG (Standing) ---
-        
-        // Force Hips to Standing height
-        if (hips) {
-            hips.position.lerp(new THREE.Vector3(0, 0.95, 0), lerpSpeed); 
-        }
 
-        // Arms down
+        if (hips) {
+            // FORCE HIPS HIGH (Direct assignment to avoid Lerp lag/sinking)
+            hips.position.y = 1.0; 
+            hips.position.z = THREE.MathUtils.lerp(hips.position.z, 0, lerpSpeed * 2);
+        }
+        
         if (leftArm) leftArm.rotation.z = THREE.MathUtils.lerp(leftArm.rotation.z, 1.2, lerpSpeed); 
         if (rightArm) rightArm.rotation.z = THREE.MathUtils.lerp(rightArm.rotation.z, -1.2, lerpSpeed);
 
-        // Steps
         if (currentStep.animation.includes("Paso0")) {
             if (leftUpLeg) leftUpLeg.rotation.set(0,0,0);
             if (rightUpLeg) rightUpLeg.rotation.set(0,0,0);
-            if (hips) hips.position.x = THREE.MathUtils.lerp(hips.position.x, 0, lerpSpeed);
         }
         else if (currentStep.animation.includes("Paso1")) {
             // Lift Leg
@@ -245,13 +231,12 @@ export const HumanAnatomyModel: React.FC<HumanAnatomyModelProps> = ({ currentSte
 
   return (
     <>
-        {/* Key prop ensures the GROUP transform is reset when maneuver changes */}
         <group key={maneuverKey} position={layout.position} rotation={layout.rotation}>
-            <primitive object={modelScene} scale={1.0} />
+            <primitive object={scene} scale={1.05} />
         </group>
 
         {currentStep?.handGhosts?.map((ghost, i) => (
-            <GhostHand key={i} config={ghost} scene={modelScene} />
+            <GhostHand key={i} config={ghost} scene={scene} />
         ))}
     </>
   );
